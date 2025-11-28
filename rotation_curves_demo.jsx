@@ -1,0 +1,390 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+
+const RotationCurveVisualizer = () => {
+  const [selectedCurve, setSelectedCurve] = useState('ngc3198');
+  const canvasRef = useRef(null);
+  const animationRef = useRef(null);
+  const particlesRef = useRef([]);
+
+  // Real data from NGC3198
+  const ngc3198Data = [
+    [0.5, 55], [1.0, 95], [1.5, 115], [2.0, 130], [2.5, 140],
+    [3.0, 147], [3.5, 152], [4.0, 155], [4.5, 158], [5.0, 160],
+    [5.5, 161], [6.0, 162], [6.5, 162], [7.0, 162], [7.5, 162],
+    [8.0, 161], [8.5, 161], [9.0, 161], [9.5, 160], [10.0, 160],
+    [11.0, 159], [12.0, 158], [13.0, 157], [14.0, 157], [15.0, 156],
+    [16.0, 156], [17.0, 155], [18.0, 155], [19.0, 154], [20.0, 154],
+    [22.0, 153], [24.0, 152], [26.0, 151], [28.0, 150], [30.0, 150]
+  ];
+
+  // Interpolation function for NGC3198 data
+  const interpolateNGC3198 = (r) => {
+    // Scale r from [0.1, 2] to [0.5, 30] kpc
+    const rKpc = 0.5 + (r - 0.1) * (30 - 0.5) / (2 - 0.1);
+    
+    // Find surrounding data points
+    for (let i = 0; i < ngc3198Data.length - 1; i++) {
+      if (rKpc >= ngc3198Data[i][0] && rKpc <= ngc3198Data[i + 1][0]) {
+        // Linear interpolation
+        const r1 = ngc3198Data[i][0];
+        const v1 = ngc3198Data[i][1];
+        const r2 = ngc3198Data[i + 1][0];
+        const v2 = ngc3198Data[i + 1][1];
+        const t = (rKpc - r1) / (r2 - r1);
+        return v1 + t * (v2 - v1);
+      }
+    }
+    // If outside range, return edge values
+    if (rKpc < ngc3198Data[0][0]) return ngc3198Data[0][1];
+    return ngc3198Data[ngc3198Data.length - 1][1];
+  };
+
+  // Calculate enclosed mass from rotation curve using M(r) = v²r/G
+  // For gravitationally bound circular orbits: v²/r = GM/r² => M = v²r/G
+  // We'll use arbitrary units with a scaling factor for display
+  const calculateEnclosedMass = (velocityFunc) => {
+    return (r) => {
+      const v = velocityFunc(r);
+      // M ∝ v²r (G is absorbed into scaling constant for display)
+      return (v * v * r) / 100; // Scaled for reasonable plot values
+    };
+  };
+
+  // Define rotation curves
+  const rotationCurves = {
+    ngc3198: {
+      name: 'NGC 3198 (Real Galaxy)',
+      velocityFunc: interpolateNGC3198,
+      description: 'Actual observed rotation curve from NGC3198',
+      enclosedMassFunc: calculateEnclosedMass(interpolateNGC3198)
+    },
+    homogeneousDisk: {
+      name: 'Homogeneous Disk',
+      velocityFunc: (r) => {
+        // For uniform surface density disk: M(r) ∝ r² (area), so v ∝ r for r < R_disk
+        // For r > R_disk: M constant, so v ∝ 1/√r (Keplerian)
+        const diskRadius = 1.0;
+        if (r < diskRadius) {
+          return r * 150; // v ∝ r inside disk
+        } else {
+          return 150 / Math.sqrt(r / diskRadius); // v ∝ 1/√r outside disk
+        }
+      },
+      description: 'Uniform surface density until r=1, then Keplerian',
+      enclosedMassFunc: calculateEnclosedMass((r) => {
+        const diskRadius = 1.0;
+        if (r < diskRadius) {
+          return r * 150;
+        } else {
+          return 150 / Math.sqrt(r / diskRadius);
+        }
+      })
+    },
+    wheel: {
+      name: 'Rigid Body (Wheel)',
+      velocityFunc: (r) => r * 50, // v = ωr
+      description: 'Linear increase with radius',
+      enclosedMassFunc: calculateEnclosedMass((r) => r * 50) // M ∝ r³ for rigid body
+    },
+    solarSystem: {
+      name: 'Solar System (Keplerian)',
+      velocityFunc: (r) => 200 / Math.sqrt(r), // v ∝ 1/√r
+      description: 'Inverse square root decline',
+      enclosedMassFunc: calculateEnclosedMass((r) => 200 / Math.sqrt(r)) // M constant (point mass)
+    },
+    flat: {
+      name: 'Flat (Idealized)',
+      velocityFunc: (r) => 150,
+      description: 'Constant velocity (dark matter)',
+      enclosedMassFunc: calculateEnclosedMass((r) => 150) // M ∝ r for constant v
+    }
+  };
+
+  // Generate plot data
+  const generatePlotData = () => {
+    const data = [];
+    const curve = rotationCurves[selectedCurve];
+    for (let r = 0.1; r <= 2; r += 0.05) {
+      data.push({
+        radius: r.toFixed(2),
+        velocity: curve.velocityFunc(r).toFixed(1),
+        mass: curve.enclosedMassFunc(r).toFixed(1)
+      });
+    }
+    return data;
+  };
+
+  // Get max velocity for Y-axis scaling
+  const getMaxVelocity = () => {
+    const curve = rotationCurves[selectedCurve];
+    let maxV = 0;
+    for (let r = 0.1; r <= 2; r += 0.05) {
+      maxV = Math.max(maxV, curve.velocityFunc(r));
+    }
+    return Math.ceil(maxV / 50) * 50; // Round up to nearest 50
+  };
+
+  // Get max mass for Y-axis scaling
+  const getMaxMass = () => {
+    const curve = rotationCurves[selectedCurve];
+    let maxM = 0;
+    for (let r = 0.1; r <= 2; r += 0.05) {
+      maxM = Math.max(maxM, curve.enclosedMassFunc(r));
+    }
+    return Math.ceil(maxM / 100) * 100; // Round up to nearest 100
+  };
+
+  // Reset particles to starting positions
+  const resetParticles = () => {
+    const numParticles = 8;
+    const particles = [];
+    for (let i = 0; i < numParticles; i++) {
+      const radius = 0.3 + (i * 0.2);
+      particles.push({
+        radius: radius,
+        angle: 0, // All start at the same angle (radial line)
+        trail: []
+      });
+    }
+    particlesRef.current = [...particles]; // Create new array reference to trigger update
+  };
+
+  // Initialize particles
+  useEffect(() => {
+    resetParticles();
+  }, []);
+
+  // Handle canvas click to add particle
+  const handleCanvasClick = (e) => {
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2;
+    const scale = 120; // Use same scale as animation
+    
+    // Get click position relative to canvas
+    const clickX = (e.clientX - rect.left) * (canvas.width / rect.width);
+    const clickY = (e.clientY - rect.top) * (canvas.height / rect.height);
+    
+    // Calculate distance from center
+    const dx = clickX - centerX;
+    const dy = clickY - centerY;
+    const radius = Math.sqrt(dx * dx + dy * dy) / scale;
+    
+    // Only add if within reasonable bounds
+    if (radius > 0.15 && radius < 1.8) {
+      const angle = Math.atan2(dy, dx);
+      particlesRef.current.push({
+        radius: radius,
+        angle: angle,
+        trail: []
+      });
+    }
+  };
+
+  // Animation loop
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2;
+    const scale = 120; // Reduced scale to keep particles in bounds
+
+    const curve = rotationCurves[selectedCurve];
+
+    const animate = () => {
+      // Clear canvas
+      ctx.fillStyle = '#0a0a1a';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Draw center
+      ctx.fillStyle = '#ffd700';
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, 8, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Draw orbital paths
+      ctx.strokeStyle = '#ffffff20';
+      ctx.lineWidth = 1;
+      particlesRef.current.forEach(particle => {
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, particle.radius * scale, 0, Math.PI * 2);
+        ctx.stroke();
+      });
+
+      // Update and draw particles
+      particlesRef.current.forEach((particle, idx) => {
+        const velocity = curve.velocityFunc(particle.radius);
+        const angularVelocity = velocity / (particle.radius * scale) * 0.02;
+        
+        particle.angle += angularVelocity;
+
+        const x = centerX + particle.radius * scale * Math.cos(particle.angle);
+        const y = centerY + particle.radius * scale * Math.sin(particle.angle);
+
+        // Trail length proportional to velocity
+        const maxTrailLength = Math.floor(velocity / 3); // More velocity = longer trail
+        
+        // Add to trail
+        particle.trail.push({ x, y });
+        if (particle.trail.length > maxTrailLength) {
+          particle.trail.shift();
+        }
+
+        // Draw trail
+        ctx.strokeStyle = `hsl(${(idx * 45) % 360}, 70%, 50%)`;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        particle.trail.forEach((point, i) => {
+          if (i === 0) {
+            ctx.moveTo(point.x, point.y);
+          } else {
+            ctx.lineTo(point.x, point.y);
+          }
+        });
+        ctx.stroke();
+
+        // Draw particle
+        ctx.fillStyle = `hsl(${(idx * 45) % 360}, 70%, 60%)`;
+        ctx.beginPath();
+        ctx.arc(x, y, 5, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      animationRef.current = requestAnimationFrame(animate);
+    };
+
+    animate();
+
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+    };
+  }, [selectedCurve]);
+
+  const plotData = generatePlotData();
+  const currentCurve = rotationCurves[selectedCurve];
+
+  return (
+    <div className="w-full h-screen bg-gradient-to-br from-slate-900 to-slate-800 p-6 overflow-auto">
+      <div className="max-w-7xl mx-auto">
+        <h1 className="text-3xl font-bold text-white mb-2">Rotation Curve Visualizer</h1>
+        <p className="text-slate-300 mb-6">Explore how different rotation curves affect orbital motion</p>
+
+        {/* Controls */}
+        <div className="bg-slate-800 rounded-lg p-6 mb-6 border border-slate-700">
+          <label className="block text-white font-semibold mb-3">Select Rotation Curve:</label>
+          <select
+            value={selectedCurve}
+            onChange={(e) => setSelectedCurve(e.target.value)}
+            className="w-full p-3 bg-slate-700 text-white rounded-lg border border-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            {Object.entries(rotationCurves).map(([key, curve]) => (
+              <option key={key} value={key}>
+                {curve.name} - {curve.description}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Rotation Curve Plot */}
+          <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
+            <h2 className="text-xl font-semibold text-white mb-4">Rotation Curve & Enclosed Mass</h2>
+            <div className="bg-slate-700 rounded p-3 mb-3 border border-slate-600">
+              <p className="text-slate-300 text-sm">
+                Enclosed mass calculated using: <span className="font-mono text-blue-300">M(&lt;r) = v²r/G</span>
+              </p>
+            </div>
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={plotData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                <XAxis 
+                  dataKey="radius" 
+                  stroke="#9ca3af"
+                  label={{ value: 'Radius (arbitrary units)', position: 'insideBottom', offset: -5, fill: '#9ca3af' }}
+                />
+                <YAxis 
+                  yAxisId="left"
+                  stroke="#3b82f6"
+                  domain={[0, getMaxVelocity()]}
+                  label={{ value: 'Velocity (km/s)', angle: -90, position: 'insideLeft', fill: '#3b82f6' }}
+                />
+                <YAxis 
+                  yAxisId="right"
+                  orientation="right"
+                  stroke="#f59e0b"
+                  domain={[0, getMaxMass()]}
+                  label={{ value: 'Enclosed Mass (arbitrary)', angle: 90, position: 'insideRight', fill: '#f59e0b' }}
+                />
+                <Tooltip 
+                  contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #475569' }}
+                  labelStyle={{ color: '#e2e8f0' }}
+                />
+                <Legend />
+                <Line 
+                  yAxisId="left"
+                  type="monotone" 
+                  dataKey="velocity" 
+                  stroke="#3b82f6" 
+                  strokeWidth={3}
+                  dot={false}
+                  name="Velocity"
+                />
+                <Line 
+                  yAxisId="right"
+                  type="monotone" 
+                  dataKey="mass" 
+                  stroke="#f59e0b" 
+                  strokeWidth={3}
+                  dot={false}
+                  name="Enclosed Mass"
+                />
+              </LineChart>
+            </ResponsiveContainer>
+            <p className="text-slate-400 text-sm mt-4">{currentCurve.description}</p>
+          </div>
+
+          {/* Orbital Animation */}
+          <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
+            <h2 className="text-xl font-semibold text-white mb-4">Orbital Motion</h2>
+            <canvas
+              ref={canvasRef}
+              width={500}
+              height={500}
+              onClick={handleCanvasClick}
+              className="w-full rounded-lg border border-slate-700 cursor-crosshair"
+            />
+            <button
+              onClick={resetParticles}
+              className="w-full mt-4 p-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold transition-colors"
+            >
+              Reset Particles
+            </button>
+            <p className="text-slate-400 text-sm mt-4">
+              Each colored particle orbits at a different radius. Trail length is proportional to velocity. Click/tap to add your own test mass!
+            </p>
+          </div>
+        </div>
+
+        {/* Information */}
+        <div className="bg-slate-800 rounded-lg p-6 mt-6 border border-slate-700">
+          <h3 className="text-lg font-semibold text-white mb-3">About Rotation Curves</h3>
+          <div className="text-slate-300 space-y-2 text-sm">
+            <p><strong className="text-white">NGC 3198:</strong> A real spiral galaxy 47 million light-years away. Notice how the velocity rises quickly then stays flat</p>
+            <p><strong className="text-white">Homogeneous Disk:</strong> A disk with uniform surface density out to r=1. Inside: velocity increases linearly. Outside: falls off like Keplerian.</p>
+            <p><strong className="text-white">Rigid Body:</strong> All points rotate with the same angular velocity, like a spinning wheel.</p>
+            <p><strong className="text-white">Keplerian/Solar System:</strong> Follows Newton's laws with most mass at the center. Velocity decreases with distance.</p>
+            <p><strong className="text-white">Flat (Idealized):</strong> Perfect constant velocity</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default RotationCurveVisualizer;
