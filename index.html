@@ -7,7 +7,6 @@
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script crossorigin src="https://cdn.jsdelivr.net/npm/recharts@2.1.9/dist/Recharts.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body>
@@ -15,11 +14,11 @@
     
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
-        const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } = Recharts;
 
         const RotationCurveVisualizer = () => {
           const [selectedCurve, setSelectedCurve] = useState('ngc3198');
-          const canvasRef = useRef(null);
+          const orbitCanvasRef = useRef(null);
+          const chartCanvasRef = useRef(null);
           const animationRef = useRef(null);
           const particlesRef = useRef([]);
 
@@ -105,37 +104,6 @@
             }
           };
 
-          const generatePlotData = () => {
-            const data = [];
-            const curve = rotationCurves[selectedCurve];
-            for (let r = 0.1; r <= 2; r += 0.05) {
-              data.push({
-                radius: r.toFixed(2),
-                velocity: curve.velocityFunc(r).toFixed(1),
-                mass: curve.enclosedMassFunc(r).toFixed(1)
-              });
-            }
-            return data;
-          };
-
-          const getMaxVelocity = () => {
-            const curve = rotationCurves[selectedCurve];
-            let maxV = 0;
-            for (let r = 0.1; r <= 2; r += 0.05) {
-              maxV = Math.max(maxV, curve.velocityFunc(r));
-            }
-            return Math.ceil(maxV / 50) * 50;
-          };
-
-          const getMaxMass = () => {
-            const curve = rotationCurves[selectedCurve];
-            let maxM = 0;
-            for (let r = 0.1; r <= 2; r += 0.05) {
-              maxM = Math.max(maxM, curve.enclosedMassFunc(r));
-            }
-            return Math.ceil(maxM / 100) * 100;
-          };
-
           const resetParticles = () => {
             const numParticles = 8;
             const particles = [];
@@ -155,7 +123,7 @@
           }, []);
 
           const handleCanvasClick = (e) => {
-            const canvas = canvasRef.current;
+            const canvas = orbitCanvasRef.current;
             const rect = canvas.getBoundingClientRect();
             const centerX = canvas.width / 2;
             const centerY = canvas.height / 2;
@@ -178,8 +146,123 @@
             }
           };
 
+          // Draw the rotation curve chart
           useEffect(() => {
-            const canvas = canvasRef.current;
+            const canvas = chartCanvasRef.current;
+            if (!canvas) return;
+
+            const ctx = canvas.getContext('2d');
+            const width = canvas.width;
+            const height = canvas.height;
+            const padding = 60;
+            const chartWidth = width - 2 * padding;
+            const chartHeight = height - 2 * padding;
+
+            const curve = rotationCurves[selectedCurve];
+
+            // Generate data points
+            const dataPoints = [];
+            for (let r = 0.1; r <= 2; r += 0.05) {
+              dataPoints.push({
+                r: r,
+                v: curve.velocityFunc(r),
+                m: curve.enclosedMassFunc(r)
+              });
+            }
+
+            // Find max values
+            const maxV = Math.max(...dataPoints.map(d => d.v));
+            const maxM = Math.max(...dataPoints.map(d => d.m));
+
+            // Clear canvas
+            ctx.fillStyle = '#1e293b';
+            ctx.fillRect(0, 0, width, height);
+
+            // Draw grid
+            ctx.strokeStyle = '#374151';
+            ctx.lineWidth = 1;
+            for (let i = 0; i <= 5; i++) {
+              const y = padding + (chartHeight / 5) * i;
+              ctx.beginPath();
+              ctx.moveTo(padding, y);
+              ctx.lineTo(width - padding, y);
+              ctx.stroke();
+            }
+
+            // Draw axes
+            ctx.strokeStyle = '#9ca3af';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(padding, padding);
+            ctx.lineTo(padding, height - padding);
+            ctx.lineTo(width - padding, height - padding);
+            ctx.stroke();
+
+            // Draw velocity curve
+            ctx.strokeStyle = '#3b82f6';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            dataPoints.forEach((point, i) => {
+              const x = padding + (point.r - 0.1) / 1.9 * chartWidth;
+              const y = height - padding - (point.v / maxV) * chartHeight;
+              if (i === 0) {
+                ctx.moveTo(x, y);
+              } else {
+                ctx.lineTo(x, y);
+              }
+            });
+            ctx.stroke();
+
+            // Draw mass curve
+            ctx.strokeStyle = '#f59e0b';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            dataPoints.forEach((point, i) => {
+              const x = padding + (point.r - 0.1) / 1.9 * chartWidth;
+              const y = height - padding - (point.m / maxM) * chartHeight;
+              if (i === 0) {
+                ctx.moveTo(x, y);
+              } else {
+                ctx.lineTo(x, y);
+              }
+            });
+            ctx.stroke();
+
+            // Draw labels
+            ctx.fillStyle = '#9ca3af';
+            ctx.font = '12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('Radius (arbitrary units)', width / 2, height - 20);
+            
+            ctx.save();
+            ctx.translate(20, height / 2);
+            ctx.rotate(-Math.PI / 2);
+            ctx.fillText('Velocity (km/s)', 0, 0);
+            ctx.restore();
+
+            ctx.save();
+            ctx.translate(width - 20, height / 2);
+            ctx.rotate(Math.PI / 2);
+            ctx.fillText('Mass (arb)', 0, 0);
+            ctx.restore();
+
+            // Legend
+            ctx.fillStyle = '#3b82f6';
+            ctx.fillRect(padding, 20, 20, 10);
+            ctx.fillStyle = '#e2e8f0';
+            ctx.textAlign = 'left';
+            ctx.fillText('Velocity', padding + 25, 28);
+
+            ctx.fillStyle = '#f59e0b';
+            ctx.fillRect(padding + 100, 20, 20, 10);
+            ctx.fillStyle = '#e2e8f0';
+            ctx.fillText('Mass', padding + 125, 28);
+
+          }, [selectedCurve]);
+
+          // Orbital animation
+          useEffect(() => {
+            const canvas = orbitCanvasRef.current;
             if (!canvas) return;
 
             const ctx = canvas.getContext('2d');
@@ -252,11 +335,10 @@
             };
           }, [selectedCurve]);
 
-          const plotData = generatePlotData();
           const currentCurve = rotationCurves[selectedCurve];
 
           return (
-            <div className="w-full h-screen bg-gradient-to-br from-slate-900 to-slate-800 p-6 overflow-auto">
+            <div className="w-full min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 p-6">
               <div className="max-w-7xl mx-auto">
                 <h1 className="text-3xl font-bold text-white mb-2">Rotation Curve Visualizer</h1>
                 <p className="text-slate-300 mb-6">Explore how different rotation curves affect orbital motion</p>
@@ -284,59 +366,19 @@
                         Enclosed mass calculated using: <span className="font-mono text-blue-300">M(&lt;r) = v²r/G</span>
                       </p>
                     </div>
-                    <ResponsiveContainer width="100%" height={300}>
-                      <LineChart data={plotData}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                        <XAxis 
-                          dataKey="radius" 
-                          stroke="#9ca3af"
-                          label={{ value: 'Radius (arbitrary units)', position: 'insideBottom', offset: -5, fill: '#9ca3af' }}
-                        />
-                        <YAxis 
-                          yAxisId="left"
-                          stroke="#3b82f6"
-                          domain={[0, getMaxVelocity()]}
-                          label={{ value: 'Velocity (km/s)', angle: -90, position: 'insideLeft', fill: '#3b82f6' }}
-                        />
-                        <YAxis 
-                          yAxisId="right"
-                          orientation="right"
-                          stroke="#f59e0b"
-                          domain={[0, getMaxMass()]}
-                          label={{ value: 'Enclosed Mass (arbitrary)', angle: 90, position: 'insideRight', fill: '#f59e0b' }}
-                        />
-                        <Tooltip 
-                          contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #475569' }}
-                          labelStyle={{ color: '#e2e8f0' }}
-                        />
-                        <Legend />
-                        <Line 
-                          yAxisId="left"
-                          type="monotone" 
-                          dataKey="velocity" 
-                          stroke="#3b82f6" 
-                          strokeWidth={3}
-                          dot={false}
-                          name="Velocity"
-                        />
-                        <Line 
-                          yAxisId="right"
-                          type="monotone" 
-                          dataKey="mass" 
-                          stroke="#f59e0b" 
-                          strokeWidth={3}
-                          dot={false}
-                          name="Enclosed Mass"
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
+                    <canvas
+                      ref={chartCanvasRef}
+                      width={500}
+                      height={350}
+                      className="w-full rounded-lg"
+                    />
                     <p className="text-slate-400 text-sm mt-4">{currentCurve.description}</p>
                   </div>
 
                   <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
                     <h2 className="text-xl font-semibold text-white mb-4">Orbital Motion</h2>
                     <canvas
-                      ref={canvasRef}
+                      ref={orbitCanvasRef}
                       width={500}
                       height={500}
                       onClick={handleCanvasClick}
